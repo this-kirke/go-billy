@@ -1,4 +1,4 @@
-// Package embedfs_testdata provides embedded test data for billy embedfs testing.
+// Package testdata provides embedded test data for billy embedfs testing.
 // This package is only imported by test code and won't be included in production builds.
 package testdata
 

@@ -51,7 +51,7 @@ func (fs *Embed) Root() string {
 
 func (fs *Embed) Stat(filename string) (os.FileInfo, error) {
 	filename = fs.normalizePath(filename)
-	
+
 	f, err := fs.underlying.Open(filename)
 	if err != nil {
 		return nil, err
@@ -106,9 +106,15 @@ func (fs *Embed) Join(elem ...string) string {
 	return ""
 }
 
+type ByName []os.FileInfo
+
+func (a ByName) Len() int           { return len(a) }
+func (a ByName) Less(i, j int) bool { return a[i].Name() < a[j].Name() }
+func (a ByName) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+
 func (fs *Embed) ReadDir(path string) ([]os.FileInfo, error) {
 	path = fs.normalizePath(path)
-	
+
 	e, err := fs.underlying.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -120,16 +126,12 @@ func (fs *Embed) ReadDir(path string) ([]os.FileInfo, error) {
 		entries = append(entries, fi)
 	}
 
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
-	})
+	sort.Sort(ByName(entries))
 
 	return entries, nil
 }
 
-
-
-// Lstat behaves the same as Stat for embedded filesystems since there are no symlinks.
+// Lstat behaves the same as Stat for embedded filesystems since embed.FS does not support symlinks.
 func (fs *Embed) Lstat(filename string) (os.FileInfo, error) {
 	return fs.Stat(filename)
 }

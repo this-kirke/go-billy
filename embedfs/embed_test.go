@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func TestOpen(t *testing.T) {
 	t.Parallel()
 
@@ -196,6 +195,12 @@ func TestReadDir(t *testing.T) {
 			fs:   testdata.GetTestData(),
 			want: []string{"testdata"},
 		},
+		{
+			name: "nested directory",
+			path: "testdata/subdir",
+			fs:   testdata.GetTestData(),
+			want: []string{"nested.txt"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -212,9 +217,14 @@ func TestReadDir(t *testing.T) {
 			assert.Len(t, fis, len(tc.want))
 			matched := 0
 
-			for _, n := range fis {
-				for _, w := range tc.want {
-					if n.Name() == w {
+			for _, fi := range fis {
+				// Verify all entries have proper FileInfo
+				assert.NotEmpty(t, fi.Name())
+				assert.NotNil(t, fi.ModTime())
+				assert.Greater(t, fi.Size(), int64(-1)) // Size can be 0 but not negative
+
+				for _, expected := range tc.want {
+					if fi.Name() == expected {
 						matched++
 					}
 				}
@@ -260,6 +270,8 @@ func TestFileUnsupported(t *testing.T) {
 }
 
 func TestFileSeek(t *testing.T) {
+	t.Parallel()
+
 	fs := New(testdata.GetTestData())
 
 	f, err := fs.Open("testdata/file2.txt")
@@ -271,14 +283,14 @@ func TestFileSeek(t *testing.T) {
 		seekWhence int
 		want       string
 	}{
-		{seekOff: 8, seekWhence: io.SeekStart, want: "test file"},   // pos now at 17
-		{seekOff: 8, seekWhence: io.SeekStart, want: "t"},          // pos now at 9  
-		{seekOff: 9, seekWhence: io.SeekStart, want: "est"},        // pos now at 12
-		{seekOff: 1, seekWhence: io.SeekStart, want: "nother test file"}, // pos now at 17
+		{seekOff: 8, seekWhence: io.SeekStart, want: "test file"},         // pos now at 17
+		{seekOff: 8, seekWhence: io.SeekStart, want: "t"},                 // pos now at 9
+		{seekOff: 9, seekWhence: io.SeekStart, want: "est"},               // pos now at 12
+		{seekOff: 1, seekWhence: io.SeekStart, want: "nother test file"},  // pos now at 17
 		{seekOff: 0, seekWhence: io.SeekStart, want: "Another test file"}, // pos now at 17
-		{seekOff: 0, seekWhence: io.SeekStart, want: "A"},          // pos now at 1
-		{seekOff: 0, seekWhence: io.SeekCurrent, want: "n"},        // pos now at 2
-		{seekOff: -4, seekWhence: io.SeekEnd, want: "file"},        // pos now at 17
+		{seekOff: 0, seekWhence: io.SeekStart, want: "A"},                 // pos now at 1
+		{seekOff: 0, seekWhence: io.SeekCurrent, want: "n"},               // pos now at 2
+		{seekOff: -4, seekWhence: io.SeekEnd, want: "file"},               // pos now at 17
 	}
 
 	for i, tc := range tests {
@@ -333,13 +345,11 @@ func TestJoin(t *testing.T) {
 	}
 }
 
-// Additional comprehensive tests using rich test data
-
-func TestEmbedfs_ComprehensiveOpen(t *testing.T) {
+func TestComprehensiveOpen(t *testing.T) {
 	t.Parallel()
-	
+
 	fs := New(testdata.GetTestData())
-	
+
 	// Test opening existing embedded file with content
 	f, err := fs.Open("/testdata/file1.txt")
 	require.NoError(t, err)
@@ -347,15 +357,15 @@ func TestEmbedfs_ComprehensiveOpen(t *testing.T) {
 	require.NoError(t, f.Close())
 }
 
-func TestEmbedfs_ComprehensiveRead(t *testing.T) {
+func TestComprehensiveRead(t *testing.T) {
 	t.Parallel()
-	
+
 	fs := New(testdata.GetTestData())
-	
+
 	f, err := fs.Open("/testdata/file1.txt")
 	require.NoError(t, err)
 	defer f.Close()
-	
+
 	// Read the actual content
 	buf := make([]byte, 100)
 	n, err := f.Read(buf)
@@ -363,47 +373,45 @@ func TestEmbedfs_ComprehensiveRead(t *testing.T) {
 	assert.Equal(t, "Hello from embedfs!", string(buf[:n]))
 }
 
-func TestEmbedfs_NestedFileOperations(t *testing.T) {
+func TestNestedFileOperations(t *testing.T) {
 	t.Parallel()
-	
+
 	fs := New(testdata.GetTestData())
-	
+
 	// Test nested file read
 	f, err := fs.Open("/testdata/subdir/nested.txt")
 	require.NoError(t, err)
 	defer f.Close()
-	
+
 	buf := make([]byte, 100)
 	n, err := f.Read(buf)
 	require.NoError(t, err)
 	assert.Equal(t, "Nested file content", string(buf[:n]))
 }
 
-func TestEmbedfs_PathNormalization(t *testing.T) {
+func TestPathNormalization(t *testing.T) {
 	t.Parallel()
-	
-	fs := New(testdata.GetTestData())
-	
-	// Test that our path normalization works across all methods
+
+	fs := &Embed{underlying: testdata.GetTestData()}
+
+	// Test that our path normalization works correctly
 	tests := []struct {
-		name string
-		path string
+		name     string
+		input    string
+		expected string
 	}{
-		{"root", "/"},
-		{"top-level", "/testdata"},
-		{"nested", "/testdata/subdir"},
-		{"deep file", "/testdata/subdir/nested.txt"},
+		{"root", "/", "."},
+		{"top-level", "/testdata", "testdata"},
+		{"nested", "/testdata/subdir", "testdata/subdir"},
+		{"deep file", "/testdata/subdir/nested.txt", "testdata/subdir/nested.txt"},
+		{"relative path", "testdata", "testdata"},
+		{"empty path", "", ""},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// All these should work with our path normalization
-			_, err := fs.Stat(tt.path)
-			if tt.name == "deep file" {
-				require.NoError(t, err, "file should exist")
-			} else {
-				require.NoError(t, err, "directory should exist")
-			}
+			result := fs.normalizePath(tt.input)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -428,15 +436,15 @@ func TestFile_ReadAt(t *testing.T) {
 		{"middle", 6, 4, "from"},
 		{"end", 15, 4, "dfs!"},
 		{"full content", 0, 19, "Hello from embedfs!"},
-		{"beyond end", 100, 10, ""},  // Should return EOF
+		{"beyond end", 100, 10, ""}, // Should return EOF
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := make([]byte, tt.length)
 			n, err := f.ReadAt(buf, tt.offset)
-			
-			if tt.offset >= 19 {  // Beyond file size
+
+			if tt.offset >= 19 { // Beyond file size
 				require.Error(t, err)
 				assert.Equal(t, 0, n)
 			} else {
@@ -509,4 +517,55 @@ func TestFile_LockUnlock(t *testing.T) {
 	require.NoError(t, err)
 	err = f.Unlock()
 	require.NoError(t, err)
+}
+
+func TestReadDirDirectories(t *testing.T) {
+	t.Parallel()
+
+	fs := New(testdata.GetTestData())
+
+	entries, err := fs.ReadDir("/testdata")
+	require.NoError(t, err)
+
+	// Find the subdirectory entry
+	var subdirEntry os.FileInfo
+	for _, entry := range entries {
+		if entry.Name() == "subdir" {
+			subdirEntry = entry
+			break
+		}
+	}
+
+	require.NotNil(t, subdirEntry, "subdir should be found")
+	assert.True(t, subdirEntry.IsDir(), "subdir should be a directory")
+	assert.Equal(t, "subdir", subdirEntry.Name())
+}
+
+func TestEmptyFileHandling(t *testing.T) {
+	t.Parallel()
+
+	fs := New(testdata.GetTestData())
+
+	// Test empty file stat
+	fi, err := fs.Stat("/testdata/empty.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "empty.txt", fi.Name())
+	assert.False(t, fi.IsDir())
+	assert.Equal(t, int64(0), fi.Size())
+
+	// Test opening empty file
+	f, err := fs.Open("/testdata/empty.txt")
+	require.NoError(t, err)
+	defer f.Close()
+
+	// Test reading from empty file
+	buf := make([]byte, 10)
+	n, err := f.Read(buf)
+	require.Error(t, err) // Should be EOF
+	assert.Equal(t, 0, n)
+
+	// Test ReadAt on empty file
+	n, err = f.ReadAt(buf, 0)
+	require.Error(t, err) // Should be EOF
+	assert.Equal(t, 0, n)
 }
